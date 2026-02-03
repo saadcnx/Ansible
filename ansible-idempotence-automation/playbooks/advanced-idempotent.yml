@@ -1,0 +1,109 @@
+---
+- name: Advanced Idempotence Techniques
+  hosts: local
+  become: yes
+  vars:
+    config_version: "2.1"
+    
+  tasks:
+    # Technique 1: Using register and when for conditional execution
+    - name: Check if config file exists
+      stat:
+        path: /etc/myapp/app.conf
+      register: config_file
+      
+    - name: Create initial config only if it doesn't exist
+      copy:
+        content: |
+          # Initial configuration
+          version={{ config_version }}
+          created_by=ansible
+        dest: /etc/myapp/app.conf
+        mode: '0644'
+      when: not config_file.stat.exists
+      
+    # Technique 2: Using creates parameter
+    - name: Download file only if it doesn't exist
+      get_url:
+        url: https://raw.githubusercontent.com/ansible/ansible/devel/README.md
+        dest: /tmp/ansible-readme.md
+        mode: '0644'
+        
+    # Technique 3: Using changed_when for command tasks
+    - name: Check service status
+      command: systemctl is-active nginx
+      register: nginx_status
+      changed_when: false
+      failed_when: false
+      
+    - name: Display service status
+      debug:
+        msg: "Nginx status: {{ nginx_status.stdout }}"
+        
+    # Technique 4: Using handlers for dependent actions
+    - name: Update application config version
+      lineinfile:
+        path: /etc/myapp/app.conf
+        regexp: '^version='
+        line: 'version={{ config_version }}'
+        backup: yes
+      notify:
+        - validate config
+        - restart application
+        
+    # Technique 5: Using block for error handling
+    - name: Configure application with error handling
+      block:
+        - name: Create application script
+          copy:
+            content: |
+              #!/bin/bash
+              # Application startup script
+              echo "Starting application version {{ config_version }}"
+              echo "Configuration file: /etc/myapp/app.conf"
+              echo "Log file: /var/log/myapp/service.log"
+            dest: /opt/myapp/start.sh
+            mode: '0755'
+            owner: appuser
+            group: appgroup
+            
+        - name: Test script execution
+          command: /opt/myapp/start.sh
+          become_user: appuser
+          register: script_test
+          changed_when: false
+          
+      rescue:
+        - name: Handle script creation failure
+          debug:
+            msg: "Failed to create or test application script"
+            
+      always:
+        - name: Ensure log directory exists
+          file:
+            path: /var/log/myapp
+            state: directory
+            owner: appuser
+            group: appgroup
+            mode: '0755'
+            
+    # Technique 6: Using assert for validation
+    - name: Validate configuration
+      assert:
+        that:
+          - config_file.stat.exists or not config_file.stat.exists
+          - config_version is defined
+          - config_version != ""
+        fail_msg: "Configuration validation failed"
+        success_msg: "Configuration validation passed"
+        
+  handlers:
+    - name: validate config
+      command: test -f /etc/myapp/app.conf
+      changed_when: false
+      
+    - name: restart application
+      systemd:
+        name: myapp
+        state: restarted
+      when: nginx_status.stdout == "active"
