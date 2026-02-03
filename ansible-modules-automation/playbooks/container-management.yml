@@ -1,0 +1,84 @@
+---
+- name: Container Management and Monitoring
+  hosts: local
+  gather_facts: no
+
+  tasks:
+    - name: List all running containers
+      docker_host_info:
+      register: docker_info
+
+    - name: Display Docker system information
+      debug:
+        msg: |
+          Docker Version: {{ docker_info.host_info.ServerVersion }}
+          Total Containers: {{ docker_info.containers | length }}
+          Running Containers: {{ docker_info.containers | selectattr('State', 'equalto', 'running') | list | length }}
+
+    - name: Get detailed container statistics
+      shell: docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}"
+      register: container_stats
+
+    - name: Display container statistics
+      debug:
+        msg: "{{ container_stats.stdout_lines }}"
+
+    - name: Check container logs (last 10 lines)
+      docker_container_info:
+        name: "{{ item }}"
+      loop:
+        - web-server
+        - redis-cache
+        - mysql-database
+      register: container_details
+
+    - name: Test web server connectivity
+      uri:
+        url: http://localhost:8080
+        method: GET
+        return_content: yes
+      register: web_response
+      ignore_errors: yes
+
+    - name: Display web server response
+      debug:
+        msg: |
+          Web Server Status: {{ web_response.status | default('Failed') }}
+          Response: {{ web_response.content | default('No response') }}
+
+    - name: Test Redis connectivity
+      shell: docker exec redis-cache redis-cli ping
+      register: redis_test
+      ignore_errors: yes
+
+    - name: Display Redis test result
+      debug:
+        msg: "Redis connectivity test: {{ redis_test.stdout | default('Failed') }}"
+
+    - name: Test MySQL connectivity
+      shell: docker exec mysql-database mysql -u root -prootpassword123 -e "SELECT 1"
+      register: mysql_test
+      ignore_errors: yes
+
+    - name: Display MySQL test result
+      debug:
+        msg: "MySQL connectivity test: {{ 'Success' if mysql_test.rc == 0 else 'Failed' }}"
+
+    - name: Create backup of container data
+      archive:
+        path:
+          - /tmp/nginx-content
+          - /tmp/redis-data
+          - /tmp/mysql-data
+        dest: /tmp/container-backup-{{ ansible_date_time.epoch }}.tar.gz
+        format: gz
+
+    - name: Display backup information
+      stat:
+        path: /tmp/container-backup-{{ ansible_date_time.epoch }}.tar.gz
+      register: backup_info
+
+    - name: Show backup details
+      debug:
+        msg: "Backup created: {{ backup_info.stat.path }} ({{ backup_info.stat.size }} bytes)"
+      when: backup_info.stat.exists

@@ -1,0 +1,95 @@
+---
+- name: Multi-Distribution Package Management
+  hosts: local
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    common_packages:
+      - git
+      - curl
+      - wget
+      - htop
+      - tree
+      - vim
+    
+    debian_packages:
+      - nginx
+      - mysql-client
+      - python3-pip
+    
+    redhat_packages:
+      - httpd
+      - mysql
+      - python3-pip
+
+  tasks:
+    - name: Display system information
+      debug:
+        msg: "Operating System: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Update apt cache (Debian/Ubuntu)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install common packages on Debian/Ubuntu
+      apt:
+        name: "{{ common_packages }}"
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install Debian-specific packages
+      apt:
+        name: "{{ debian_packages }}"
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Update yum cache (RedHat/CentOS)
+      yum:
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Install common packages on RedHat/CentOS
+      yum:
+        name: "{{ common_packages }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Install RedHat-specific packages
+      yum:
+        name: "{{ redhat_packages }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Ensure specific package versions (example)
+      apt:
+        name: "git=1:2.*"
+        state: present
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+
+    - name: Remove unwanted packages
+      package:
+        name: 
+          - nano
+        state: absent
+      ignore_errors: yes
+
+    - name: Verify installed packages
+      command: "{{ item }}"
+      register: package_versions
+      loop:
+        - "git --version"
+        - "curl --version"
+        - "htop --version"
+      ignore_errors: yes
+
+    - name: Display package versions
+      debug:
+        msg: "{{ item.stdout_lines[0] if item.stdout_lines else 'Package not found or error occurred' }}"
+      loop: "{{ package_versions.results }}"
+      loop_control:
+        label: "{{ item.cmd }}"

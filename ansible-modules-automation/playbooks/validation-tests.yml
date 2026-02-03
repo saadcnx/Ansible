@@ -1,0 +1,139 @@
+---
+- name: Infrastructure Validation and Testing
+  hosts: local
+  gather_facts: yes
+  become: yes 
+  become_method: sudo
+
+  vars:
+    app_name: "ansible-lab-app"
+    test_results: []
+
+  tasks:
+    - name: Test 1 - Check if application user exists
+      getent:
+        database: passwd
+        key: "{{ app_name }}"
+      register: user_check
+      ignore_errors: yes
+
+    - name: Record user test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Application user exists', 'result': user_check is succeeded}] }}"
+
+    - name: Test 2 - Check application directories
+      stat:
+        path: "{{ item }}"
+      register: dir_checks
+      loop:
+        - "/opt/{{ app_name }}/config"
+        - "/opt/{{ app_name }}/logs"
+        - "/opt/{{ app_name }}/data"
+        - "/opt/{{ app_name }}/backups"
+      ignore_errors: yes  
+
+    - name: Record directory test results
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Directory ' + item.item + ' exists', 'result': item.stat.exists | default(false)}] }}"
+      loop: "{{ dir_checks.results }}"
+      when: dir_checks is defined
+
+    - name: Test 3 - Check if nginx is running
+      systemd:
+        name: nginx
+      register: nginx_status
+      ignore_errors: yes
+
+    - name: Record nginx test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Nginx service is active', 'result': nginx_status.status.ActiveState == 'active'}] }}"
+      when: nginx_status is succeeded
+
+    - name: Test 4 - Check if application container is running
+      docker_container_info:
+        name: "{{ app_name }}-web"
+      register: container_status
+      ignore_errors: yes
+
+    - name: Record container test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Application container is running', 'result': container_status.exists | default(false) and container_status.container.State.Status == 'running'}] }}"
+      when: container_status is succeeded
+
+    - name: Test 5 - Check web server response
+      uri:
+        url: http://localhost/health
+        method: GET
+      register: health_check
+      ignore_errors: yes
+
+    - name: Record health check test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Health endpoint responds', 'result': health_check.status == 200 | default(false)}] }}"
+      when: health_check is succeeded
+
+    - name: Test 6 - Check cron jobs
+      shell: crontab -l -u {{ app_name }}
+      register: cron_check
+      ignore_errors: yes
+
+    - name: Record cron test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Cron jobs configured', 'result': cron_check.rc == 0 and 'backup' in cron_check.stdout and 'monitor' in cron_check.stdout}] }}"
+      when: cron_check is succeeded
+
+    - name: Test 7 - Check log rotation configuration
+      stat:
+        path: "/etc/logrotate.d/{{ app_name }}"
+      register: logrotate_check
+      ignore_errors: yes
+
+    - name: Record logrotate test result
+      set_fact:
+        test_results: "{{ test_results + [{'test': 'Log rotation configured', 'result': logrotate_check.stat.exists | default(false)}] }}"
+      when: logrotate_check is succeeded
+
+    - name: Display test results summary
+      debug:
+        msg: |
+          =================================
+          VALIDATION TEST RESULTS SUMMARY
+          =================================
+          {% for test in test_results %}
+          {{ test.test }}: {{ 'PASS' if test.result else 'FAIL' }}
+          {% endfor %}
+          =================================
+          Total Tests: {{ test_results | length }}
+          Passed: {{ test_results | selectattr('result', 'equalto', true) | list | length }}
+          Failed: {{ test_results | selectattr('result', 'equalto', false) | list | length }}
+          =================================
+
+    - name: Generate detailed test report
+      copy:
+        content: |
+          Ansible Lab Infrastructure Validation Report
+          Generated: {{ ansible_date_time.iso8601 }}
+          Host: {{ ansible_hostname }}
+
+          Test Results:
+          {% for test in test_results %}
+          - {{ test.test }}: {{ 'PASS' if test.result else 'FAIL' }}
+          {% endfor %}
+
+          System Information:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Kernel: {{ ansible_kernel }}
+          - Architecture: {{ ansible_architecture }}
+          - Memory: {{ ansible_memtotal_mb }}MB
+          - CPU Cores: {{ ansible_processor_vcpus }}
+
+          Summary:
+          - Total Tests: {{ test_results | length }}
+          - Passed: {{ test_results | selectattr('result', 'equalto', true) | list | length }}
+          - Failed: {{ test_results | selectattr('result', 'equalto', false) | list | length }}
+          - Success Rate: {{ ((test_results | selectattr('result', 'equalto', true) | list | length) / (test_results | length) * 100) | round(2) }}%
+        dest: "/tmp/validation-report-{{ ansible_date_time.epoch }}.txt"
+
+    - name: Display report location
+      debug:
+        msg: "Detailed validation report saved to: /tmp/validation-report-{{ ansible_date_time.epoch }}.txt"

@@ -1,0 +1,175 @@
+---
+- name: Complete Infrastructure Deployment
+  hosts: local
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    app_name: "ansible-app"
+    app_version: "1.0"
+    backup_retention_days: 7
+
+  tasks:
+    - name: Create application user
+      user:
+        name: "{{ app_name }}"
+        system: yes
+        shell: /bin/bash
+        home: "/opt/{{ app_name }}"
+        create_home: yes
+
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ app_name }}"
+        group: "{{ app_name }}"
+        mode: '0755'
+      loop:
+        - "/opt/{{ app_name }}/config"
+        - "/opt/{{ app_name }}/logs"
+        - "/opt/{{ app_name }}/data"
+        - "/opt/{{ app_name }}/backups"
+
+    - name: Install required system packages
+      apt:
+        name:
+          - nginx
+          - logrotate
+          - cron
+          - rsync
+        state: present
+        update_cache: yes
+
+    - name: Configure nginx for application
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name localhost;
+              
+              location / {
+                  proxy_pass http://localhost:8080;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+              }
+              
+              location /health {
+                  access_log off;
+                  return 200 "healthy\n";
+                  add_header Content-Type text/plain;
+              }
+          }
+        dest: "/etc/nginx/sites-available/{{ app_name }}"
+        backup: yes
+      notify: restart nginx
+
+    - name: Enable nginx site
+      file:
+        src: "/etc/nginx/sites-available/{{ app_name }}"
+        dest: "/etc/nginx/sites-enabled/{{ app_name }}"
+        state: link
+      notify: restart nginx
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: restart nginx
+
+    - name: Deploy application container
+      docker_container:
+        name: "{{ app_name }}-web"
+        image: nginx:alpine
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "8080:80"
+        volumes:
+          - "/opt/{{ app_name }}/config:/etc/nginx/conf.d:ro"
+          - "/opt/{{ app_name }}/logs:/var/log/nginx"
+        labels:
+          app: "{{ app_name }}"
+          version: "{{ app_version }}"
+
+    - name: Create log rotation configuration
+      copy:
+        content: |
+          /opt/{{ app_name }}/logs/*.log {
+              daily
+              missingok
+              rotate {{ backup_retention_days }}
+              compress
+              delaycompress
+              notifempty
+              create 644 {{ app_name }} {{ app_name }}
+          }
+        dest: "/etc/logrotate.d/{{ app_name }}"
+
+    - name: Create backup script
+      copy:
+        content: |
+          #!/bin/bash
+          BACKUP_DIR="/opt/{{ app_name }}/backups"
+          DATE=$(date +%Y%m%d_%H%M%S)
+          
+          # Create backup
+          tar -czf "$BACKUP_DIR/backup_$DATE.tar.gz" \
+              /opt/{{ app_name }}/config \
+              /opt/{{ app_name }}/data
+          
+          # Remove old backups
+          find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +{{ backup_retention_days }} -delete
+          
+          echo "Backup completed: backup_$DATE.tar.gz"
+        dest: "/opt/{{ app_name }}/backup.sh"
+        mode: '0755'
+        owner: "{{ app_name }}"
+
+    - name: Schedule backup cron job
+      cron:
+        name: "{{ app_name }} backup"
+        minute: "0"
+        hour: "2"
+        user: "{{ app_name }}"
+        job: "/opt/{{ app_name }}/backup.sh >> /opt/{{ app_name }}/logs/backup.log 2>&1"
+
+    - name: Create monitoring script
+      copy:
+        content: |
+          #!/bin/bash
+          
+          # Check if container is running
+          if docker ps | grep -q "{{ app_name }}-web"; then
+              echo "$(date): Container {{ app_name }}-web is running"
+          else
+              echo "$(date): ERROR - Container {{ app_name }}-web is not running"
+              exit 1
+          fi
+          
+          # Check if nginx is responding
+          if curl -s http://localhost/health > /dev/null; then
+              echo "$(date): Nginx health check passed"
+          else
+              echo "$(date): ERROR - Nginx health check failed"
+              exit 1
+          fi
+          
+          echo "$(date): All checks passed"
+        dest: "/opt/{{ app_name }}/monitor.sh"
+        mode: '0755'
+        owner: "{{ app_name }}"
+
+    - name: Schedule monitoring cron job
+      cron:
+        name: "{{ app_name }} monitoring"
+        minute: "*/5"
+        user: "{{ app_name }}"
+        job: "/opt/{{ app_name }}/monitor.sh >> /opt/{{ app_name }}/logs/monitor.log 2>&1"
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+        enabled: yes

@@ -1,0 +1,111 @@
+---
+- name: Docker Container Deployment and Management
+  hosts: local
+  gather_facts: yes
+  
+  vars:
+    containers:
+      - name: web-server
+        image: nginx:latest
+        ports:
+          - "8080:80"
+        volumes:
+          - "/tmp/nginx-content:/usr/share/nginx/html:ro"
+        environment:
+          NGINX_HOST: localhost
+          NGINX_PORT: 80
+        
+      - name: redis-cache
+        image: redis:latest
+        ports:
+          - "6379:6379"
+        command: redis-server --appendonly yes
+        volumes:
+          - "/tmp/redis-data:/data"
+        
+      - name: mysql-database
+        image: mysql:8.0
+        ports:
+          - "3306:3306"
+        environment:
+          MYSQL_ROOT_PASSWORD: rootpassword123
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass123
+        volumes:
+          - "/tmp/mysql-data:/var/lib/mysql"
+
+  tasks:
+    - name: Create directories for container volumes
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /tmp/nginx-content
+        - /tmp/redis-data
+        - /tmp/mysql-data
+
+    - name: Create sample HTML content for nginx
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Ansible Docker Lab</title>
+          </head>
+          <body>
+              <h1>Welcome to Ansible Docker Container Lab</h1>
+              <p>This page is served from an Nginx container deployed by Ansible!</p>
+              <p>Container deployed at: {{ ansible_date_time.iso8601 }}</p>
+          </body>
+          </html>
+        dest: /tmp/nginx-content/index.html
+
+    - name: Pull Docker images
+      docker_image:
+        name: "{{ item.image }}"
+        source: pull
+      loop: "{{ containers }}"
+
+    - name: Deploy containers
+      docker_container:
+        name: "{{ item.name }}"
+        image: "{{ item.image }}"
+        state: started
+        restart_policy: unless-stopped
+        ports: "{{ item.ports | default([]) }}"
+        volumes: "{{ item.volumes | default([]) }}"
+        env: "{{ item.environment | default({}) }}"
+        command: "{{ item.command | default(omit) }}"
+      loop: "{{ containers }}"
+      register: container_results
+
+    - name: Display container deployment results
+      debug:
+        msg: "Container {{ item.item.name }}: {{ 'Started' if item.changed else 'Already running' }}"
+      loop: "{{ container_results.results }}"
+
+    - name: Wait for containers to be ready
+      wait_for:
+        port: "{{ item.ports[0].split(':')[0] }}"
+        host: localhost
+        timeout: 30
+      loop: "{{ containers }}"
+      when: item.ports is defined
+
+    - name: Get container information
+      docker_container_info:
+        name: "{{ item.name }}"
+      loop: "{{ containers }}"
+      register: container_info
+
+    - name: Display container status
+      debug:
+        msg: |
+          Container: {{ item.item.name }}
+          Status: {{ item.container.State.Status }}
+          IP Address: {{ item.container.NetworkSettings.IPAddress }}
+          Ports: {{ item.container.NetworkSettings.Ports }}
+      loop: "{{ container_info.results }}"
+      when: item.exists

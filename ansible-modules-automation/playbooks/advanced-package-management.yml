@@ -1,0 +1,75 @@
+---
+- name: Advanced Package Management Scenarios
+  hosts: local
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    development_tools:
+      - build-essential
+      - gcc
+      - make
+      - cmake
+    
+    web_server_packages:
+      - nginx
+      - apache2-utils
+    
+    database_packages:
+      - mysql-client
+      - postgresql-client
+
+  tasks:
+    - name: Create package installation summary
+      set_fact:
+        installation_summary: []
+
+    - name: Install development tools
+      apt:
+        name: "{{ development_tools }}"
+        state: present
+        update_cache: yes
+      register: dev_tools_result
+      when: ansible_os_family == "Debian"
+
+    - name: Add development tools to summary
+      set_fact:
+        installation_summary: "{{ installation_summary + ['Development tools: ' + (dev_tools_result.changed | string)] }}"
+      when: dev_tools_result is defined
+
+    - name: Install web server packages
+      apt:
+        name: "{{ web_server_packages }}"
+        state: present
+      register: web_server_result
+      when: ansible_os_family == "Debian"
+
+    - name: Add web server packages to summary
+      set_fact:
+        installation_summary: "{{ installation_summary + ['Web server packages: ' + (web_server_result.changed | string)] }}"
+      when: web_server_result is defined
+
+    - name: Install database client packages
+      apt:
+        name: "{{ database_packages }}"
+        state: present
+      register: db_packages_result
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+
+    - name: Add database packages to summary
+      set_fact:
+        installation_summary: "{{ installation_summary + ['Database packages: ' + (db_packages_result.changed | default(false) | string)] }}"
+      when: db_packages_result is defined
+
+    - name: Display installation summary
+      debug:
+        msg: "{{ installation_summary }}"
+
+    - name: Check disk space after installations
+      shell: df -h /
+      register: disk_space
+
+    - name: Display disk space information
+      debug:
+        msg: "Disk space usage: {{ disk_space.stdout_lines }}"
