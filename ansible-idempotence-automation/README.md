@@ -30,6 +30,14 @@ ansible-playbook playbooks/master-idempotent.yml --diff
 Running the same playbook multiple times results in the same system state
 with no unintended changes — proving true idempotent automation.
 
+![Screenshot]  <img width="1534" height="715" alt="non-indopment" src="https://github.com/user-attachments/assets/d1537f3d-3d50-44dd-85cd-83ced9bab32f" />
+<img width="907" height="881" alt="master-indopment" src="https://github.com/user-attachments/assets/25ad5a93-77c0-4f3d-88d5-72e4e8bb90bb" />
+<img width="970" height="513" alt="master-result" src="https://github.com/user-attachments/assets/79b9d35d-96cc-470e-9521-d8aac812212c" />
+<img width="769" height="648" alt="bash_test_indempotence" src="https://github.com/user-attachments/assets/4671ccc5-adc6-423b-9d3a-c3d208c23242" />
+<img width="832" height="718" alt="testing _from_bash_script" src="https://github.com/user-attachments/assets/d203cad1-2ee1-4192-b266-5843854fadd5" />
+<img width="852" height="483" alt="advance-test" src="https://github.com/user-attachments/assets/f8a4ad8a-b93c-43b1-b9c3-cc9fb90f95f3" />
+
+
 
 📂 Project Structure
 ``` text
@@ -48,3 +56,4 @@ ansible-idempotence-automation/
 ├── test-idempotence.sh
 ├── validate-idempotence.sh
 └── README.md
+
