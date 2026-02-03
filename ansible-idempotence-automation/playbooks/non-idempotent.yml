@@ -1,0 +1,15 @@
+---
+- name: Non-Idempotent Example
+  hosts: localhost
+  become: yes
+  tasks:
+    - name: Append text to file (non-idempotent)
+      shell: 'echo "Current time: $(date)" >> /tmp/non_idempotent.txt'
+      # Note: Single quotes around the entire command
+
+    - name: Create directory with timestamp
+      shell: 'mkdir -p /tmp/dir_$(date +%s)'
+      # Single quotes here too
+
+    - name: Add user with random suffix
+      shell: 'useradd testuser_$(shuf -i 1000-9999 -n 1) || true'

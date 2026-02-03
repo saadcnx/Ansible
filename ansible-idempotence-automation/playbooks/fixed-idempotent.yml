@@ -1,0 +1,55 @@
+---
+- name: Fixed Idempotent Tasks
+  hosts: local
+  become: yes
+  
+  tasks:
+    # Fix 1: Use lineinfile instead of shell echo
+    - name: Ensure backup setting exists in config
+      lineinfile:
+        path: /etc/myapp/app.conf
+        line: "backup_enabled=true"
+        state: present
+        backup: yes
+        
+    # Fix 2: Use copy with backup instead of shell cp
+    - name: Create backup of config file
+      copy:
+        src: /etc/myapp/app.conf
+        dest: /etc/myapp/app.conf.backup
+        remote_src: yes
+        backup: yes
+      when: ansible_date_time.epoch | int % 86400 == 0  # Daily backup
+      
+    # Fix 3: Use handler for service restart
+    - name: Update nginx configuration
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^\s*worker_connections'
+        line: '        worker_connections 1024;'
+        backup: yes
+      notify: restart nginx
+      
+    # Fix 4: Use command with changed_when
+    - name: Check disk space
+      command: df -h
+      register: disk_space
+      changed_when: false
+      
+    - name: Display disk space
+      debug:
+        var: disk_space.stdout_lines
+        
+    # Fix 5: Use lineinfile with backup for config changes
+    - name: Set debug mode in config
+      lineinfile:
+        path: /etc/myapp/app.conf
+        regexp: '^debug='
+        line: 'debug=true'
+        backup: yes
+        
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
